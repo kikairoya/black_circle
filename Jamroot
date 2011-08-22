@@ -1,0 +1,154 @@
+import testing ;
+import os ;
+import common ;
+import toolset ;
+import feature ;
+import builtin ;
+import property-set ;
+import option ;
+
+BOOST_ROOT = [ os.environ BOOST_ROOT ] ;
+OPENSSL_ROOT = [ os.environ OPENSSL_ROOT ] ;
+
+project : build-dir bin
+	: requirements
+		<define>BOOST_ALL_NO_LIB=1
+		<link>shared:<define>BOOST_SYSTEM_DYN_LINK=1
+		<link>shared:<define>BOOST_TEST_DYN_LINK=1
+		<toolset-gcc:flavor>mingw:<target-os>windows
+		<toolset-gcc:flavor>cygwin:<target-os>cygwin
+		<conditional>@suppress-warnings
+		<c++-template-depth>256
+	: usage-requirements
+		<define>BOOST_ALL_NO_LIB=1
+		<link>shared:<define>BOOST_SYSTEM_DYN_LINK=1
+		<link>shared:<define>BOOST_TEST_DYN_LINK=1
+	;
+
+rule suppress-warnings ( properties * ) {
+    local vc-ver = [
+        MATCH "^<toolset-msvc:version>([0-9]+)[.]" : $(properties)
+    ] ;
+    if $(vc-ver) && $(vc-ver) >= 8
+    {
+        return <cxxflags>-wd4819 <cxxflags>-wd4996 ;
+    }
+}
+
+
+alias win32_sys_libs : : <library>ws2_32 <library>mswsock <library>gdi32 <library>user32 <library>advapi32 : : <library>ws2_32 <library>mswsock <library>gdi32 <library>user32 <library>advapi32 ;
+alias posix_sys_libs : : <library>rt <library>pthread <library>zlib <library>dl : : <library>rt <library>pthread <library>zlib <library>dl ;
+lib ssl : : : : <library>crypto ;
+lib ssl : : <toolset>msvc <name>ssleay32 <link>shared:<search>$(OPENSSL_ROOT)/out32dll <link>static:<search>$(OPENSSL_ROOT)/out32 : : <library>crypto ;
+lib crypto : : <use>posix_sys_libs : : <library>posix_sys_libs ;
+lib crypto : : <toolset>msvc <name>libeay32 <use>win32_sys_libs
+	<link>shared:<search>$(OPENSSL_ROOT)/out32dll <link>static:<search>$(OPENSSL_ROOT)/out32 
+	: : <library>win32_sys_libs ;
+lib crypto : : <use>win32_sys_libs <toolset>gcc <target-os>cygwin : : <library>win32_sys_libs <library>zlib ;
+lib crypto : : <use>win32_sys_libs <toolset>gcc <target-os>windows : : <library>win32_sys_libs ;
+lib ws2_32 ;
+lib mswsock ;
+lib gdi32 ;
+lib user32 ;
+lib advapi32 ;
+lib rt ;
+lib pthread ;
+lib zlib : : <name>z ;
+lib dl ;
+
+
+alias openssl : : <library>ssl <library>crypto <include>$(OPENSSL_ROOT)/include : : <library>ssl <library>crypto <include>$(OPENSSL_ROOT)/include ;
+
+cpp-pch common : common.hpp : <include>. <library>boost_headers ;
+alias common : : <toolset>clang ;
+
+obj json_parser : json_parser_inst.cc common : <use>common ;
+
+exe black_circle :
+	http_client_inst.cc json_parser black_circle.cc twitter.cc console.cc conversion.cc common
+	:
+	<library>boost_headers
+	<library>boost_program_options
+	<library>boost_system
+	<library>boost_thread
+	<library>ssl
+	:
+	:
+	<library>boost_headers
+	<library>boost_program_options
+	<library>boost_system
+	<library>boost_thread
+	<library>ssl
+	;
+
+local test_names = json-test ;
+for name in $(test_names) {
+	run tests/$(name).cc json_parser common : : : <library>boost_unit_test_framework <library>boost_system <include>. : $(name) ;
+	explicit $(name) ;
+}
+alias test : $(test_names) ;
+explicit test ;
+
+local prefix = [ option.get prefix ] ;
+if [ os.name ] = NT {
+	prefix ?= C:\\black_circle ;
+} else {
+	prefix ?= /usr/local/black_circle ;
+}
+
+
+install install-bin : black_circle :
+	<location>$(prefix)/bin
+	<dll-path>$(prefix)/lib
+	<install-dependencies>on
+	<install-type>EXE
+	;
+
+install install-bin : black_circle :
+	<target-os>cygwin
+	<location>$(prefix)/bin
+	<install-dependencies>on
+	<install-type>EXE
+	<install-type>SHARED_LIB
+	;
+
+install install-bin : black_circle :
+	<target-os>windows
+	<location>$(prefix)/bin
+	<install-dependencies>on
+	<install-type>EXE
+	<install-type>SHARED_LIB
+	;
+
+install install-lib : black_circle :
+	<location>$(prefix)/lib
+	<install-dependencies>on
+	<install-type>LIB
+    ;
+
+install install-lib : :
+	<target-os>cygwin
+	;
+install install-lib : :
+	<target-os>windows
+	;
+
+alias install : install-bin install-lib ;
+explicit install-bin install-lib install-inc install ;
+
+if $(BOOST_ROOT) = "" {
+	lib boost_program_options ;
+	lib boost_system ;
+	lib boost_unit_test_framework ;
+	lib boost_thread ;
+	alias boost_headers ;
+} else {
+	use-project /boost : $(BOOST_ROOT) ;
+	alias boost_program_options : /boost/program_options//boost_program_options ;
+	alias boost_system : /boost/system//boost_system ;
+	alias boost_unit_test_framework : /boost/test//boost_unit_test_framework ;
+	alias boost_thread : /boost/thread//boost_thread ;
+	alias boost_headers : /boost//headers ;
+}
+
+
